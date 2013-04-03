@@ -31,7 +31,7 @@ import binascii
 import httplib2
 from hashlib import sha1
 
-import _version
+import oauth2._version
 
 __version__ = _version.__version__
 
@@ -83,25 +83,26 @@ def build_xoauth_string(url, consumer, token=None):
 def to_unicode(s):
     """ Convert to unicode, raise exception with instructive error
     message if s is not unicode, ascii, or utf-8. """
-    if not isinstance(s, str):
+    if not isinstance(s, (bytes, str)):
         raise TypeError('You are required to pass either unicode or string here, not: %r (%s)' % (type(s), s))
-    try:
-        s = s.decode('utf-8')
-    except UnicodeDecodeError as le:
-        raise TypeError('You are required to pass either a unicode object or a utf-8 string here. You passed a Python string object which contained non-utf-8: %r. The UnicodeDecodeError that resulted from attempting to interpret it as utf-8 was: %s' % (s, le,))
+    if isinstance(s, bytes):
+        try:
+            s = s.decode('utf-8')
+        except UnicodeDecodeError as le:
+            raise TypeError('You are required to pass either a unicode object or a utf-8 string here. You passed a Python string object which contained non-utf-8: %r. The UnicodeDecodeError that resulted from attempting to interpret it as utf-8 was: %s' % (s, le,))
     return s
 
 def to_utf8(s):
     return to_unicode(s).encode('utf-8')
 
 def to_unicode_if_string(s):
-    if isinstance(s, str):
+    if isinstance(s, (bytes, str)):
         return to_unicode(s)
     else:
         return s
 
 def to_utf8_if_string(s):
-    if isinstance(s, str):
+    if isinstance(s, (bytes, str)):
         return to_utf8(s)
     else:
         return s
@@ -111,7 +112,7 @@ def to_unicode_optional_iterator(x):
     Raise TypeError if x is a str containing non-utf8 bytes or if x is
     an iterable which contains such a str.
     """
-    if isinstance(x, str):
+    if isinstance(x, (bytes, str)):
         return to_unicode(x)
 
     try:
@@ -127,7 +128,7 @@ def to_utf8_optional_iterator(x):
     Raise TypeError if x is a str or if x is an iterable which
     contains a str.
     """
-    if isinstance(x, str):
+    if isinstance(x, (bytes, str)):
         return to_utf8(x)
 
     try:
@@ -140,7 +141,7 @@ def to_utf8_optional_iterator(x):
 
 def escape(s):
     """Escape a URL including any /."""
-    return urllib.parse.quote(s.encode('utf-8'), safe='~')
+    return urllib.parse.quote(s, safe='~')
 
 def generate_timestamp():
     """Get seconds since epoch (UTC)."""
@@ -388,7 +389,8 @@ class Request(dict):
         """Serialize as post data for a POST request."""
         d = {}
         for k, v in self.items():
-            d[k.encode('utf-8')] = to_utf8_optional_iterator(v)
+            #d[k.encode('utf-8')] = to_utf8_optional_iterator(v)
+            d[k] = to_unicode_optional_iterator(v)
 
         # tell urlencode to deal with sequence values and map them correctly
         # to resulting querystring. for example self["k"] = ["v1", "v2"] will
@@ -475,7 +477,7 @@ class Request(dict):
             # section 4.1.1 "OAuth Consumers MUST NOT include an
             # oauth_body_hash parameter on requests with form-encoded
             # request bodies."
-            self['oauth_body_hash'] = base64.b64encode(sha1(self.body).digest())
+            self['oauth_body_hash'] = to_unicode(base64.b64encode(sha1(to_utf8(self.body)).digest()))
 
         if 'oauth_consumer_key' not in self:
             self['oauth_consumer_key'] = consumer.key
@@ -494,7 +496,8 @@ class Request(dict):
     @classmethod
     def make_nonce(cls):
         """Generate pseudorandom number."""
-        return str(random.randint(0, 100000000))
+        #return str(random.randint(0, 100000000))
+        return base64.b64encode(("%0x" % random.getrandbits(256)).encode("utf-8"))[:32]
  
     @classmethod
     def from_request(cls, http_method, http_url, headers=None, parameters=None,
@@ -623,7 +626,7 @@ class Client(httplib2.Http):
 
     def request(self, uri, method="GET", body='', headers=None, 
         redirections=httplib2.DEFAULT_MAX_REDIRECTS, connection_type=None):
-        DEFAULT_POST_CONTENT_TYPE = 'application/x-www-form-urlencoded'
+        DEFAULT_POST_CONTENT_TYPE = 'application/x-www-form-urlencoded;charset=UTF-8'
 
         if not isinstance(headers, dict):
             headers = {}
@@ -633,7 +636,7 @@ class Client(httplib2.Http):
                 DEFAULT_POST_CONTENT_TYPE)
 
         is_form_encoded = \
-            headers.get('Content-Type') == 'application/x-www-form-urlencoded'
+            headers.get('Content-Type') == 'application/x-www-form-urlencoded;charset=UTF-8'
 
         if is_form_encoded and body:
             parameters = urllib.parse.parse_qs(body)
@@ -822,10 +825,10 @@ class SignatureMethod_HMAC_SHA1(SignatureMethod):
         """Builds the base signature string."""
         key, raw = self.signing_base(request, consumer, token)
 
-        hashed = hmac.new(key, raw, sha1)
+        hashed = hmac.new(to_utf8(key), to_utf8(raw), sha1)
 
         # Calculate the digest base 64.
-        return binascii.b2a_base64(hashed.digest())[:-1]
+        return to_unicode(binascii.b2a_base64(hashed.digest())[:-1])
 
 
 class SignatureMethod_PLAINTEXT(SignatureMethod):
